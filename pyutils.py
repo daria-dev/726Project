@@ -6,7 +6,86 @@ from torch import nn, optim
 from torch.nn import functional as F
 from torchvision import datasets, transforms
 import matplotlib.pyplot as plt
+from torch.utils.data import Dataset
+import pandas as pd
+from skimage import io
 
+class CelebADataset(Dataset):
+    """CelebA dataset."""
+
+    def __init__(self, csv_file, root_dir, transform=None):
+        """
+        Args:
+            csv_file (string): Path to the csv file with annotations. 40 attributes
+            root_dir (string): Directory with all the images.
+            transform (callable, optional): Optional transform to be applied
+                on a sample.
+        """
+        self.attr = pd.read_csv(csv_file, sep='\s+')
+        #self.attr = self.att
+        self.root_dir = root_dir
+        self.transform = transform
+
+    def __len__(self):
+        return len(os.listdir(self.root_dir))
+
+    def __getitem__(self, idx):
+        if torch.is_tensor(idx):
+            idx = idx.tolist()
+
+        imgs = os.listdir(self.root_dir)
+        img_name = os.path.join(self.root_dir, imgs[idx])
+
+        image = io.imread(img_name)
+        attrs = self.attr.loc[[imgs[idx]]]
+        try:
+            attrs = np.array([attrs.iloc[0]])
+        except:
+            print(img_name)
+
+        if self.transform:
+            image =  self.transform(image)
+
+        return image, attrs
+
+class SkyFinderDataset(Dataset):
+    """SkyFinder dataset."""
+
+    def __init__(self, csv_file, root_dir, attrs, transform=None):
+        """
+        Args:
+            csv_file (string): Path to the csv file with annotations.
+            root_dir (string): Directory with all the images.
+            attrs (list): attributes to select
+            transform (callable, optional): Optional transform to be applied
+                on a sample.
+        """
+        self.attr = pd.read_csv(csv_file)
+        #self.attr = self.att
+        self.root_dir = root_dir
+        self.transform = transform
+
+    def __len__(self):
+        return len(os.listdir(self.root_dir))
+
+    def __getitem__(self, idx):
+        if torch.is_tensor(idx):
+            idx = idx.tolist()
+
+        imgs = os.listdir(self.root_dir)
+        img_name = os.path.join(self.root_dir, imgs[idx])
+
+        image = io.imread(img_name)
+        attrs = self.attr.loc[self.attr["Filename"] == imgs[idx]]
+        try:
+            attrs = np.array([attrs["night"].iloc[0]])
+        except:
+            print(img_name)
+
+        if self.transform:
+            image =  self.transform(image)
+
+        return image, attrs
 
 def population_mean_norm(path): #Utility function to normalize input data based on mean and standard deviation of the entire dataset
     train_dataset1 = torchvision.datasets.ImageFolder(
