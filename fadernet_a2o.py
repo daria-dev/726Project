@@ -7,7 +7,7 @@ from argparse import ArgumentParser
 import torchvision
 from tqdm import tqdm
 import matplotlib.pyplot as plt
-from pyutils import show, SkyFinderDataset, CelebADataset
+from pyutils import show, SkyFinderDataset, CelebADataset, Apple2OrangeDataset
 from torchvision.utils import make_grid
 import pandas as pd
 
@@ -16,10 +16,10 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu") #use GPU i
 parser = ArgumentParser(description = "customize training")
 parser.add_argument('--disc_schedule', '-ds', default = '0.000001')
 parser.add_argument('--fader_lr', '-f', default = '0.0002')
-parser.add_argument('--disc_lr', '-d', default = '0.00002')
+parser.add_argument('--disc_lr', '-d', default = '0.0002')
 parser.add_argument('--latent_space_dim', default =512)
 parser.add_argument('--in_channel', default=3)
-parser.add_argument('--attr_dim', default =2)
+parser.add_argument('--attr_dim', default =1)
 parser.add_argument('--print_every', default =10)
 parser.add_argument('--data', default = 'mnist')
 args = parser.parse_args()
@@ -48,6 +48,15 @@ elif args.data == "celeba":
     train_dataset = CelebADataset(
         "list_attr_celeba.txt",
         "celeba_selected/",
+        transform=torchvision.transforms.Compose(
+            [torchvision.transforms.ToPILImage(),
+            torchvision.transforms.Resize((256,256)),
+            torchvision.transforms.ToTensor()])
+        )
+elif args.data == "apples2oranges":
+    train_dataset = Apple2OrangeDataset(
+        "summer2winter/metadata.csv",
+        "summer2winter_data/",
         transform=torchvision.transforms.Compose(
             [torchvision.transforms.ToPILImage(),
             torchvision.transforms.Resize((256,256)),
@@ -87,20 +96,10 @@ def train_reconst(epoch):
     train_size = len(train_loader.dataset)
 
     for batch, labels in tqdm(train_loader, desc="Epoch {}".format(epoch)):
-        batch_size = labels.shape[0]
-        labels = labels.view(batch_size,40)
-        labels[labels < 0] = 0
-
-        labels_ = torch.zeros((labels.shape[0], 2))
-        labels_[:,0] = labels[:, 15]
-        labels_[:,1] = labels[:, 20]
-        #labels_[:,2] = labels[:, 21]
-
-        batch_size = len(labels_)
-        hot_digits = torch.zeros((batch_size, 2, 4, 4)).to(device)
-        for i, digit in enumerate(labels_):
-            digit[digit < 0] = 0
-            digit = digit.view(2, 1, 1)
+        batch_size = len(labels)
+        hot_digits = torch.zeros((batch_size, 1, 4, 4)).to(device)
+        for i, digit in enumerate(labels):
+            digit = digit.view(1, 1, 1)
             digit = torch.cat([digit, digit], dim=1)
             digit = torch.cat([digit, digit], dim=2)
             digit = torch.cat([digit, digit], dim=1)
@@ -134,16 +133,18 @@ def train(epoch):
     for batch, labels in tqdm(train_loader, desc="Epoch {}".format(epoch)):
         data = batch.to(device)
         #labels = torch.tensor(labels, dtype=torch.float).to(device)
-        batch_size = labels.shape[0]
-        labels = labels.view(batch_size,40)
-        labels[labels < 0] = 0
+        batch_size = len(labels)
+        hot_digits = torch.zeros((batch_size, 1, 4, 4)).to(device)
+        for i, digit in enumerate(labels):
+            digit = digit.view(1, 1, 1)
+            digit = torch.cat([digit, digit], dim=1)
+            digit = torch.cat([digit, digit], dim=2)
+            digit = torch.cat([digit, digit], dim=1)
+            digit = torch.cat([digit, digit], dim=2)
+            
+            hot_digits[i,:,:,:] = digit
 
-        labels_ = torch.zeros((labels.shape[0], 2))
-        labels_[:,0] = labels[:, 20]
-        labels_[:,1] = labels[:, 39]
-        #labels_[:,2] = labels[:, 9]
-
-        #print(labels_)
+        labels = labels.to(torch.float)
 
         disc_optim.zero_grad()
 
@@ -152,24 +153,11 @@ def train(epoch):
         
         # Encode data
         z = fader.encode(data)
-
-        # Prepare attributes
-        batch_size = len(labels_)
-        hot_digits = torch.zeros((batch_size, 2, 4, 4)).to(device)
-        for i, digit in enumerate(labels_):
-            digit[digit < 0] = 0
-            digit = digit.view(2, 1, 1)
-            digit = torch.cat([digit, digit], dim=1)
-            digit = torch.cat([digit, digit], dim=2)
-            digit = torch.cat([digit, digit], dim=1)
-            digit = torch.cat([digit, digit], dim=2)
-            
-            hot_digits[i,:,:,:] = digit
         
         # Train discriminator
         label_probs = disc(z)
-        #disc_loss = F.cross_entropy(label_probs, labels, reduction='mean')
-        disc_loss = attr_loss(labels_, label_probs)
+        disc_loss = F.cross_entropy(label_probs, labels, reduction='mean')
+        #disc_loss = attr_loss(labels, label_probs)
         #disc_loss = F.mse_loss(label_probs, labels)
         sum_disc_loss += disc_loss.item()
 
@@ -177,11 +165,11 @@ def train(epoch):
         disc_optim.step()
 
         # Compute discriminator accuracy
-        #disc_pred = torch.argmax(label_probs, 1)
-        #disc_acc = torch.sum(disc_pred == labels)
+        # disc_pred = torch.argmax(label_probs, 1)
+        # disc_acc = torch.sum(disc_pred == labels)
         label_probs[label_probs < 0.5] = 0
         label_probs[label_probs >= 0.5] = 1
-        disc_acc = torch.sum(label_probs == labels_) / 2
+        disc_acc = torch.sum(label_probs == labels)
         sum_disc_acc += disc_acc.item()
         
         
@@ -196,7 +184,7 @@ def train(epoch):
         reconsts = fader.decode(z, hot_digits)
         rec_loss = F.mse_loss(reconsts, data, reduction='mean')
         sum_rec_loss += rec_loss.item()
-        fader_loss = rec_loss - disc_weight * attr_loss(1 - labels_, label_probs)
+        fader_loss = rec_loss - disc_weight * attr_loss(1 - labels, label_probs)
 
         fader_loss.backward()
         fader_optim.step()
@@ -221,29 +209,18 @@ def test(epoch):
     with torch.no_grad():
         for batch, labels in train_loader:
             # Encode batch
-            batch_size = labels.shape[0]
-            labels = labels.view(batch_size,40)
-            labels[labels < 0] = 0
-
-            labels_ = torch.zeros((labels.shape[0], 2))
-            labels_[:,0] = labels[:, 15]
-            labels_[:,1] = labels[:, 20]
-            #labels_[:,2] = labels[:, 21]
-            data_batch = batch.to(device)
-            z = fader.encode(data_batch)
-
-            # Prepare attributes
-            batch_size = len(labels_)
-            hot_digits = torch.zeros((batch_size, 2, 4, 4)).to(device)
-            for i, digit in enumerate(labels_):
-                digit[digit < 0] = 0
-                digit = digit.view(2, 1, 1)
+            batch_size = len(labels)
+            hot_digits = torch.zeros((batch_size, 1, 4, 4)).to(device)
+            for i, digit in enumerate(labels):
+                digit = digit.view(1, 1, 1)
                 digit = torch.cat([digit, digit], dim=1)
                 digit = torch.cat([digit, digit], dim=2)
                 digit = torch.cat([digit, digit], dim=1)
                 digit = torch.cat([digit, digit], dim=2)
             
                 hot_digits[i,:,:,:] = digit
+            data_batch = batch.to(device)
+            z = fader.encode(data_batch)
 
             # Reconstruct
             # label_probs = disc(z)
@@ -285,8 +262,8 @@ def test(epoch):
 
 epochs = 1001
 
-for i in range(50):
-    train_reconst(i)
+# for i in range(100):
+#     train_reconst(i)
 
 recs, accs, disc_wts = [], [], []
 for epoch in range(epochs):

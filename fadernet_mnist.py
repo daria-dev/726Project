@@ -13,7 +13,7 @@ from tqdm import tqdm
 from pyutils import population_mean_norm,show
 import matplotlib.pyplot as plt
 from torch.optim import lr_scheduler
-from models import fader, disc
+from models_mnist import fader, disc
 from mnist import MNIST
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu") #use GPU if available
@@ -88,7 +88,7 @@ def train(epoch):
         z,skip1,skip2,skip3 = fader.encode(data)
 
         if epoch%10 == 0 and z.shape[0] == 32:
-            z_temp = z.view(z.shape[0], 512*2*2)
+            z_temp = z.view(z.shape[0], 256*2*2)
             z_temp = z_temp.cpu()
             temp = z_temp.detach().numpy() 
             labs = labels.cpu().detach().numpy()
@@ -96,11 +96,12 @@ def train(epoch):
             umap_labels.append(labs[1])
 
         
-        # Train discriminator
-        disc_optim.zero_grad()        
-        maps,label_probs = disc(z)
+        # Train discriminator        
+        maps,label_probs = disc(z.detach())
         disc_loss = F.cross_entropy(label_probs, labels, reduction='mean')
         sum_disc_loss += disc_loss.item()
+
+        disc_optim.zero_grad()
         disc_loss.backward()
         disc_optim.step()
 
@@ -115,11 +116,11 @@ def train(epoch):
         
         
         # Train Fader
-        fader_optim.zero_grad()
         z,skip1,skip2,skip3 = fader.encode(data)
         
         # Invariance of latent space from new disc
         _,label_probs = disc(z)
+        label_probs = label_probs.detach()
         
         # Reconstruction
         reconsts = fader.decode(z, labels,skip1,skip2,skip3)
@@ -127,7 +128,7 @@ def train(epoch):
         sum_rec_loss += rec_loss.item()
         fader_loss = rec_loss - disc_weight * F.cross_entropy(label_probs, labels, reduction='mean')
 
-
+        fader_optim.zero_grad()
         fader_loss.backward()
         fader_optim.step()
         
@@ -180,20 +181,6 @@ def test(epoch):
             disc_losses += disc_loss.item()
             rec_losses += rec_loss.item()
             disc_accs += disc_acc.item()
-          
-            data_batch = data_batch[:1].to(device)
-            labels = labels[:1].to(device)
-
-            batch_z,skip1,skip2,skip3= fader.encode(data_batch)
-
-            con1 = torch.cat((batch_z, batch_z), 0)
-            skip11 = torch.cat([skip1, skip1], 0) 
-            skip22 = torch.cat([skip2, skip2], 0)
-            skip33 = torch.cat([skip3, skip3], 0)
-            con2 = torch.cat((con1, batch_z), 0)
-            con3 = torch.cat((con2, batch_z), 0)
-
-            faders = (torch.tensor([0,1]).long()).to(device)
 
             '''
             KEYS
@@ -204,16 +191,14 @@ def test(epoch):
 
             plt.clf()
 
-            show(make_grid(data_batch.detach().cpu()), 'Epoch {} Original'.format(epoch),epoch,0)
+            show(make_grid(data_batch.detach().cpu()), 'Epoch {} Original'.format(epoch),epoch,"img")
+            show(make_grid(reconsts), 'Epoch {} Reconst with Orig Attr'.format(epoch),epoch,"orig")
 
-            reconst = fader.decode(batch_z,labels,skip1,skip2,skip3).cpu()
-            show(make_grid(reconst.view(1, 1, 28, 28)), 'Epoch {} Reconst with Orig Attr'.format(epoch),epoch,1)
+            mod_attr = torch.zeros((data_batch.shape[0], 10, 2, 2)).to(device)
+            mod_attr[:,3,:,:] = 1
 
-            hot_digits = torch.zeros((batch_z.shape[0], 10, 2, 2)).to(device)
-            hot_digits[:,3,:,:] = 1
-
-            fader_reconst = fader.decode(batch_z,hot_digits,skip1,skip2,skip3).cpu()
-            show(make_grid(fader_reconst.view(1, 1, 28, 28), nrow=2), 'Epoch {} Reconst With Attr 3'.format(epoch),epoch,2)
+            fader_reconst = fader(data_batch, mod_attr).cpu()
+            show(make_grid(fader_reconst), 'Epoch {} Reconst With Attr 3'.format(epoch),epoch,"mod")
             break
 
         print('Test Rec Loss: {:.8f}'.format(rec_losses / len(train_loader.dataset)))

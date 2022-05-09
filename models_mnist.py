@@ -13,21 +13,21 @@ class Discriminator(nn.Module):
     super().__init__()
     self.layer1 = nn.Sequential(nn.Linear(32,10))
     self.linears = nn.Sequential(
-        nn.Linear(512*2*2, 512),
-        nn.BatchNorm1d(512),
+        nn.Linear(256*2*2, 256),
+        nn.BatchNorm1d(256),
         nn.Dropout(0.3),
         nn.ReLU(),
-        nn.Linear(512, 32),
+        nn.Linear(256, 32),
         nn.Dropout(0.3),
         nn.ReLU()
     )
     
   def forward(self, z_s):
     batch_size = z_s.shape[0]
-    z_s = z_s.view(batch_size,512*2*2)
+    z_s = z_s.view(batch_size,256*2*2)
     maps = self.linears(z_s)
     preds = self.layer1(maps)
-    preds = nn.Sigmoid()(preds)
+    #preds = nn.Sigmoid()(preds)
     return maps,preds
     
 class FaderNetwork(nn.Module):
@@ -40,11 +40,10 @@ class FaderNetwork(nn.Module):
             nn.Conv2d(16, 64, kernel_size=3, stride=2, padding=1),
             nn.LeakyReLU(0.2))
     self.layer3 = nn.Sequential(
-            nn.Conv2d(64, 256, kernel_size=3, stride=2, padding=1),
+            nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1),
             nn.LeakyReLU(0.2))
     self.layer4 = nn.Sequential(
-            nn.Conv2d(256, 512, kernel_size=3, stride=2, padding=1),
-            nn.LeakyReLU(0.2))
+            nn.Conv2d(128, 256, kernel_size=3, stride=2, padding=1))
     # self.layer5 = nn.Sequential(
     #         nn.Conv2d(128, 256, kernel_size=4, stride=2, padding=1),
     #         nn.LeakyReLU(0.2))
@@ -70,11 +69,11 @@ class FaderNetwork(nn.Module):
     #     nn.ReLU()
     #     )
     self.conv4 = nn.Sequential(
-        nn.ConvTranspose2d(512+10, 256, 3, 2, 1, 1, bias=False),
+        nn.ConvTranspose2d(256+10, 128, 3, 2, 1, 1, bias=False),
         nn.ReLU()
         )
     self.conv5 = nn.Sequential(
-        nn.ConvTranspose2d(256+10, 64, 3, 2, 1, bias=False),
+        nn.ConvTranspose2d(128+10, 64, 3, 2, 1, bias=False),
         nn.ReLU()
         )
     self.conv6 = nn.Sequential(
@@ -149,7 +148,8 @@ class FaderNetwork(nn.Module):
 
     out7 = self.conv7(out6)
 
-    return out7
+    return nn.Tanh()(out7)
+
   def decode(self, z_s, labels,skip1,skip2,skip3):
     batch_size = len(labels)
     hot_digits = torch.zeros((batch_size, 10, 2, 2)).to(device)

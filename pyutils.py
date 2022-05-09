@@ -10,6 +10,49 @@ from torch.utils.data import Dataset
 import pandas as pd
 from skimage import io
 
+class Apple2OrangeDataset(Dataset):
+    """Apple2Orange dataset."""
+
+    def __init__(self, csv_file, root_dir, transform=None):
+        """
+        Args:
+            csv_file (string): Path to the csv file with annotations.
+            root_dir (string): Directory with all the images.
+            transform (callable, optional): Optional transform to be applied
+                on a sample.
+        """
+        self.attr = pd.read_csv(csv_file)
+        #self.attr.index = self.attr.index.map(lambda x : str(x).split(",")[0])
+        self.attr = self.attr.set_index("image_id")
+        self.root_dir = root_dir
+        self.transform = transform
+
+    def __len__(self):
+        return len(os.listdir(self.root_dir))
+
+    def __getitem__(self, idx):
+        if torch.is_tensor(idx):
+            idx = idx.tolist()
+
+        imgs = os.listdir(self.root_dir)
+        img_name = os.path.join(self.root_dir, imgs[idx])
+
+        image = io.imread(img_name)
+        key = imgs[idx][:-4]
+        attrs = self.attr["domain"].loc[[key]]
+        try:
+            attrs = np.array([attrs.iloc[0]])
+        except:
+            print(img_name)
+
+        if self.transform:
+            image =  self.transform(image)
+
+        attrs = list(map(lambda x : 1 if x == "A (Summer)" else 0, attrs))
+        attrs = torch.tensor(attrs)
+
+        return image, attrs
+
 class CelebADataset(Dataset):
     """CelebA dataset."""
 

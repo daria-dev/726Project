@@ -1,6 +1,16 @@
 from torch import nn
 import torch
 
+class ResnetBlock(torch.nn.Module):
+    def __init__(self, conv_dim):
+        super(ResnetBlock, self).__init__()
+        self.conv_layer = torch.nn.Sequential(torch.nn.Conv2d(conv_dim, conv_dim, 3, 1, 1, bias=False),
+                                              torch.nn.InstanceNorm2d(conv_dim))
+
+    def forward(self, x):
+        out = x + self.conv_layer(x)
+        return out
+
 '''
     Discriminator
 '''
@@ -12,11 +22,11 @@ class Discriminator(nn.Module):
               nn.BatchNorm1d(latent_space_dim),
               nn.Dropout(0.3),
               nn.ReLU(),
-              nn.Linear(latent_space_dim, 32),
+              nn.Linear(latent_space_dim, 128),
               nn.Dropout(0.3),
               nn.ReLU(),
-              nn.Linear(32,40),
-              nn.Sigmoid()]
+              nn.Linear(128,1)]
+              #nn.Sigmoid()]
     self.model = nn.Sequential(*layers)
     
   def forward(self, z_s):
@@ -41,8 +51,20 @@ class FaderNetwork(nn.Module):
                   nn.Conv2d(128, 256, kernel_size=3, stride=2, padding=1),
                   nn.LeakyReLU(0.2),
                   nn.Conv2d(256, latent_space_dim, kernel_size=3, stride=2, padding=1)]
+
+        enc_layers.append(ResnetBlock(latent_space_dim))
+        enc_layers.append(torch.nn.ReLU())
+        enc_layers.append(ResnetBlock(latent_space_dim))
+        enc_layers.append(torch.nn.ReLU())
+        enc_layers.append(ResnetBlock(latent_space_dim))
+        enc_layers.append(torch.nn.ReLU())
+
+        dec_resnet = [ResnetBlock(latent_space_dim), nn.ReLU(),
+                  ResnetBlock(latent_space_dim), nn.ReLU(),
+                  ResnetBlock(latent_space_dim), nn.ReLU()]
                   
-        self.dec_layers = nn.ModuleList([nn.ConvTranspose2d(latent_space_dim+attribute_dim, 256, 3, 2, 1, 1, bias=False),
+        self.dec_layers = nn.ModuleList([
+                  nn.ConvTranspose2d(latent_space_dim+attribute_dim, 256, 3, 2, 1, 1, bias=False),
                   nn.ReLU(),
                   nn.ConvTranspose2d(256+attribute_dim, 128, 3, 2, 1, 1, bias=False),
                   nn.ReLU(),
@@ -61,6 +83,7 @@ class FaderNetwork(nn.Module):
         # loss = l2()
                   
         self.encoder = nn.Sequential(*enc_layers)
+        self.dec_res = nn.Sequential(*dec_resnet)
 
     def forward(self, images, attr):
         enc = self.encode(images)
@@ -70,6 +93,7 @@ class FaderNetwork(nn.Module):
         return self.encoder(images)
 
     def decode(self, z, attr):
+        z = self.dec_res(z)
         z_s = torch.cat([z, attr], dim=1)
         out = z_s
         
